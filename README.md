@@ -8,25 +8,13 @@ While the original study established a link between social reward responsivity a
 
 ## 🚀 Key Improvements & Modifications
 
-In this replication, several critical changes were made to the original analytical pipeline to address methodological limitations and enhance the robustness of the results:
+I tried to make the entire analysis process more rigorous and comprehensive, so I made some necessary modifications to the original workflow. These include:
 
-1.  **Refined Preprocessing & Variable Formatting:**
-    * Departed from the original "Z-score standardization" for Age and Sex.
-    * **Age:** Centered but kept in natural units (years) to allow for intuitive interpretation (e.g., "log-odds change per year" vs. "per SD").
-    * **Sex:** Implemented sum-to-zero contrasts (`contr.sum`) to ensure the model intercept represents the grand mean rather than a specific reference group.
-
-2.  **Reasonable Weakly Informative Priors:**
-    * Replaced default or overly broad priors with scientifically grounded, regularizing priors.
-    * Applied `normal(0, 0.5)` for monotonic social reward effects to prevent overfitting in the small sample ($N=59$) and `normal(0, 1)` for Age to allow for realistic developmental trajectories.
-
-3.  **Handling Missing Data:**
-    * Implemented **Multiple Imputation** (using the `mice` package) to address missing values, ensuring unbiased estimates compared to listwise deletion.
-
-4.  **Intuitive Result Interpretation:**
-    * Results are reported using **Odds Ratios (OR)** and probabilities for "average" and "extreme" cases, making the magnitude of the effects (e.g., adult social reward vs. age) immediately understandable.
-
-5.  **Prior Sensitivity Analysis:**
-    * Included a sensitivity check comparing the main model against "Tight" (SD=0.3) and "Wide" (SD=1.5) priors to verify the robustness of the posterior estimates.
+* **Preprocessing:** Fixed variable formatting (e.g., centering instead of scaling) for better interpretability.
+* **Priors:** Applied more reasonable weakly informative priors.
+* **Missing Data:** Performed multiple imputation to handle missing data.
+* **Interpretation:** Provided more intuitive results and explanations.
+* **Sensitivity Check:** Added a prior sensitivity analysis to verify robustness.
 
 ## 📂 Project Structure
 
