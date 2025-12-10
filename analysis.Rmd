@@ -1,0 +1,342 @@
+---
+title: "FB_demo"
+author: "Chi Zhang"
+date: "2025-12-09"
+output:
+  pdf_document:
+    latex_engine: xelatex
+  html_document: default
+  word_document: default
+
+editor_options:
+  markdown:
+    wrap: sentence
+---
+
+# Packages
+
+```{r, echo=FALSE, results='hide', warning = FALSE, message = FALSE}
+library(brms) 
+library(tidyverse)
+library(dplyr)
+library(scales)
+library(ggthemes)
+library(bayestestR)
+library(ggridges)
+library(rstan)
+library(ggdist)
+library(HDInterval)
+library(mice)
+library(ggdist)
+library(patchwork)
+
+if (!dir.exists("models")) {
+  dir.create("models")
+}
+
+theme_set(bayesplot::theme_default())
+
+```
+
+# Data
+
+This demo is used to replicate (and potentially optimise) the data analysis in Stengelin, R., Petrović, L., Thiele, M., Hepach, R., & Haun, D. B. (2024). Social reward predicts false belief understanding in Namibian Hai|| om children. Social Development, 33(4), e12767.
+Lets' first get familiar with the dataset. The Independant Variable is FB (false belief), binary with 1 stands for passing the test and 0 fail. social touch from 0-8 represent how much time children touch on pad to see more adult/peer, as social rewards. We are trying to argue that social rewards (and what kind of social rewards) predicts children passing FB test.
+
+```{r}
+data <- read.csv("data/sode12767-sup-0002-suppmat.csv", 
+                     header = TRUE, 
+                     dec = ",", 
+                     sep = ";", 
+                     stringsAsFactors = FALSE)
+
+data
+```
+
+In the original paper, the authors preprocessed the data in an unorthodox way: specifically, they standardized both sex and age. This is understandable from an engineering perspective, as it facilitates faster MCMC sampling. However, it renders the model output considerably harder to interpret. With standardized variables, one can no longer make statements such as "for each additional year of age, children are x% more likely to pass the test," because the units of age and sex no longer carry natural meaning. Instead, one is limited to statements like "for one standard deviation increase in age…"—which is less intuitive.
+Here I name a age.C as age - mean age, that age variable is still centering, yet each unit of the vairable is still naturally 1 year. And for sex, I make it a factor variable, but 0 point stands for average of male and female, which help make the intercept in the output understandable. I like the idea to make social touch as mo (), here I keep it as it is in original settings. 
+
+```{r}
+data$ID  <- as.factor(data$ID)
+data$Sex <- as.factor(data$Sex)
+contrasts(data$Sex) <- contr.sum(2)
+data$social.adult <- as.numeric(data$SocialTouches_Adult)
+data$social.peer  <- as.numeric(data$SocialTouches_Peer)
+data$FB <-as.numeric(data$FB)
+data$Age <-as.numeric(data$Age)
+data$age.C <- data$Age - mean(data$Age)
+```
+
+# Prior
+
+I also re-assign reasonable prior. For intercept, now we are expecting "an average child around 5.5 years old with 0 score in touching task, would have x% chance to pass the FB test". I agree to set it at (0, 1.5), this means the base probability is around 5%~95%. 
+While for age prior, the original setting is normal(0, 0.375), this is less intuitive. In the original setting, after scaling, one SD of age is around 1.6 year, thus the OD for each year grow is around exp (0.375/1.6) = 1.3. This is a very narrow prior, since we can expect children suddenly grow in one year (normally find in 3-5 years old as a milestone?), thus the original setting is about to say "I don't quite believe that children can grow so fast in one year". I expand a bit to (0,1) for age.C, means I am not surprised to see if the odds of passing rise 3 times for each year grow, which is more reasonable.
+For social rewards, which is specified as a monotonic effect, I set the prior as Normal(0, 1). The original prior of Normal(0, 1.5) is overly diffuse when considered in context. Taking two standard deviations as a reasonable upper bound (i.e., a coefficient of 3), this implies that children at the highest level of social reward (8) compared to those at the lowest level (0) could differ by a factor of approximately 20 in their odds of passing the task (e3≈20). Such an extreme effect size is implausible for a cognitive task of this nature. A tighter prior of Normal(0, 1) constrains the estimates to a more realistic range while still remaining weakly informative.
+
+```{r}
+common_prior <- c(
+
+  set_prior("normal(0, 1.5)", class = "Intercept"),
+  set_prior("normal(0, 1)", class = "b", coef = "age.C"),
+  set_prior("normal(0, 0.5)", class = "b", coef = "Sex1")
+)
+
+adult_prior <- common_prior + 
+  set_prior("normal(0, 1)", class = "b", coef = "mosocial.adult")
+
+peer_prior <- common_prior + 
+  set_prior("normal(0, 1)", class = "b", coef = "mosocial.peer")
+
+
+null_prior <- c(
+  set_prior("normal(0, 1.5)", class = "Intercept"),
+  set_prior("normal(0, 0.5)", class = "b", coef = "Sex1")
+)
+```
+
+
+# Multiple imputation
+
+There was one missing value in the social touch (adult) variable. Ordinarily, I would perform multiple imputation to generate several completed datasets (e.g., five) and then fit the model using brm_multiple() to properly account for imputation uncertainty. However, given that this is a demonstration and the proportion of missing data is negligible, I opted to impute a single completed dataset for simplicity.
+```{r}
+imp <- mice(data, m = 1, method = 'pmm', maxit = 5, seed = 123)
+data_imputed <- complete(imp)
+data_imputed$social.adult <- as.numeric(data_imputed$SocialTouches_Adult)
+```
+
+# Fitting model
+
+The iteration number is reduced to 2000 for quicker sampling, but I find this is more than enough as all models converge well.
+```{r}
+
+# Model 1: Adult Social Reward + Age + Sex
+FB_model_adult_age <- brm(
+  formula = FB ~ mo(social.adult) + age.C + Sex, 
+  data = data_imputed,
+  prior = adult_prior,
+  family = bernoulli(link = "logit"),
+  # Demo Mode Settings
+  cores = 4, 
+  warmup = 1000, 
+  iter = 2000, 
+  backend = "cmdstanr", 
+  control = list(adapt_delta = 0.99),
+  sample_prior="yes",
+  seed = 1234,
+  file = "models/demo_FB_model_adult_age" 
+)
+
+# Model 2: Peer Social Reward + Age + Sex
+FB_model_peer_age <- brm(
+  formula = FB ~ mo(social.peer) + age.C + Sex, 
+  data = data_imputed,
+  prior = peer_prior,
+  family = bernoulli(link = "logit"),
+  cores = 4, 
+  warmup = 1000, 
+  iter = 2000, 
+  backend = "cmdstanr",
+  control = list(adapt_delta = 0.99),
+  seed = 1234,
+  file = "models/demo_FB_model_peer_age"
+)
+
+
+
+# Model 3: Age Only (+ Sex control)
+FB_model_age <- brm(
+  formula = FB ~ age.C + Sex, 
+  data = data_imputed,
+  prior = common_prior, 
+  family = bernoulli(link = "logit"),
+  cores = 4, 
+  warmup = 1000, 
+  iter = 2000, 
+  backend = "cmdstanr",
+  control = list(adapt_delta = 0.99),
+  seed = 1234,
+  file = "models/demo_FB_model_age"
+)
+
+
+
+# Model 4: Null Model (Only Sex control)
+FB_model_null <- brm(
+  formula = FB ~ Sex, 
+  data = data_imputed,
+  prior = null_prior, 
+  family = bernoulli(link = "logit"),
+  cores = 4, 
+  warmup = 1000, 
+  iter = 2000, 
+  backend = "cmdstanr",
+  control = list(adapt_delta = 0.99),
+  seed = 1234,
+  file = "models/demo_FB_model_null"
+)
+
+```
+
+# Results
+
+Now we can better interpret our results. General patterns are the same as the original paper: we find that age significantly predicts (or more faithful to Bayesian genre, say it is an non-zero postive effect) children FB, and social reward (adult) also serve as a postive effect, though this is quite marginal [0.04, 1.36].
+Beyond that, we can make more intuitive statements (that is really good for public communication and advertisement!) to say:  
+For an average 5.5-year-old child who shows extreme indifference in the adult social reward task (i.e., zero button presses), the model predicts a probability of passing the false belief (FB) test of only average around 24% (Intercept = -1.16). This is well below the sample's average passing rate of 37/59, suggesting that at this age, passing the FB test is challenging for children who lack social motivation toward adults.With each additional year of age, the odds of passing the test are expected to increase by a factor of $e^{0.59} = 1.8$ on average. This is consistent with developmental psychology, which identifies ages 3 to 6 as a critical period for ToM development.Regarding adult social reward, the odds of passing the test are $e^{0.58} = 1.79$ times higher for the most socially motivated children (8 presses) compared to the least socially motivated (0 presses). On average, each additional press of the adult social button corresponds to an approximate 7.5% increase in the odds of passing the FB test.
+
+```{r}
+summary (FB_model_adult_age)
+```
+
+```{r}
+summary (FB_model_peer_age)
+```
+
+```{r}
+summary (FB_model_age)
+```
+
+```{r}
+summary(FB_model_null)
+```
+
+
+# Prior sensitive analysis
+
+I won't go through interpreting each model, and I really like the visualisation in the original paper, I won't go through these in detail. But one thing the original paper is missing: prior sensitive analysis. It seems ok to not doing PSA as original paper finds the effect of social rewards adult is 0.67 [0.10, 1.59]. It's ok to think this range is safe. While in my model, it shows signal of danger (0.58 [0.04, 1.36]), it is very marginal as a non-zero effect. If being picky enough, people might ask whether this is because your prior providing extra information, questioning whether the pattern is data-oriented or prior-oriented. Here I give a tight prior at (0, 0.5) and wide prior (0, 1.5) (this is also the setting in the original paper.)
+
+```{r}
+common_prior_fixed <- c(
+  set_prior("normal(0, 1.5)", class = "Intercept"),
+  set_prior("normal(0, 1)",   class = "b", coef = "age.C"),
+  set_prior("normal(0, 0.5)", class = "b", coef = "Sex1")
+)
+
+prior_tight <- common_prior_fixed + 
+  set_prior("normal(0, 0.5)", class = "b", coef = "mosocial.adult")
+
+model_adult_tight <- brm(
+  formula = FB ~ mo(social.adult) + age.C + Sex, 
+  data = data_imputed,
+  prior = prior_tight,
+  family = bernoulli(link = "logit"),
+  cores = 4, warmup = 1000, iter = 2000, backend = "cmdstanr",
+  seed = 1234,
+  sample_prior="yes",
+  file = "models/sens_model_adult_tight"
+)
+
+
+prior_wide <- common_prior_fixed + 
+  set_prior("normal(0, 1.5)", class = "b", coef = "mosocial.adult")
+
+model_adult_wide <- brm(
+  formula = FB ~ mo(social.adult) + age.C + Sex, 
+  data = data_imputed,
+  prior = prior_wide,
+  family = bernoulli(link = "logit"),
+  cores = 4, warmup = 1000, iter = 2000, backend = "cmdstanr",
+  seed = 1234,
+  sample_prior="yes",
+  file = "models/sens_model_adult_wide"
+)
+```
+The results shows it passes the senstive analysis, but still marginal in tight prior (0.44 [0, 0.97]), suggesting one should be more careful when interpreting this pattern.
+```{r}
+summary (model_adult_tight)
+summary (model_adult_wide)
+```
+# Visualisation
+
+Let's do a nicely plot that I saw in Winter et al (2025) (https://www.sciencedirect.com/science/article/pii/S002244052400147X). 
+```{r}
+
+extract_prior_post <- function(model) {
+  draws <- as_draws_df(model)
+  
+
+  post_name  <- "bsp_mosocial.adult"
+  prior_name <- "prior_bsp_mosocial.adult"
+
+  bind_rows(
+    tibble(value = draws[[prior_name]], Type = "Prior"),
+    tibble(value = draws[[post_name]],  Type = "Posterior")
+  )
+}
+
+
+d1 <- extract_prior_post(model_adult_tight)
+d2 <- extract_prior_post(FB_model_adult_age)
+d3 <- extract_prior_post(model_adult_wide)
+
+
+plot_beautiful <- function(data, title_text) {
+
+  post_vals <- data$value[data$Type == "Posterior"]
+
+  ci_vals <- quantile(post_vals, probs = c(0.025, 0.975))
+  
+
+  sub_label <- sprintf("95%% CI: [%.2f, %.2f]", ci_vals[1], ci_vals[2])
+  
+  ggplot(data, aes(x = value, fill = Type, color = Type, linetype = Type)) +
+    geom_density(alpha = 0.4, size = 1) + 
+    scale_fill_manual(values = c("Posterior" = "gray80", "Prior" = "#E69F00")) +
+    scale_color_manual(values = c("Posterior" = "gray40", "Prior" = "#E69F00")) +
+    scale_linetype_manual(values = c("Posterior" = "solid", "Prior" = "dashed")) +
+    geom_vline(xintercept = 0, linetype = "dotted", color = "black", alpha = 0.5) +
+    scale_y_continuous(expand = c(0, 0)) +
+    coord_cartesian(xlim = c(-2.5, 2.5)) + 
+
+    labs(title = title_text,
+         subtitle = sub_label, 
+         x = NULL, y = NULL) +
+    theme_classic() +
+    theme(
+      plot.title = element_text(face = "bold", size = 11),
+      legend.position = "none", 
+      axis.line.y = element_blank(),
+      axis.text.y = element_blank(),
+      axis.ticks.y = element_blank()
+    )
+}
+
+p1 <- plot_beautiful(d1, "1. Tight Prior (SD=0.5)")
+p2 <- plot_beautiful(d2, "2. Medium Prior (SD=1)") 
+p3 <- plot_beautiful(d3, "3. Wide Prior (SD=1.5)")
+
+p_combined <- (p1 | p2 | p3) + 
+  plot_layout(guides = "collect") +
+  theme(legend.position = "bottom", 
+        legend.title = element_blank(),
+      
+        legend.text = element_text(size = 10))
+
+# 2. 预览 (在 RStudio 中可能看起来会被压扁，不要担心)
+print(p_combined)
+
+# 3. 关键步骤：保存为细长型图片
+# width = 12, height = 3.5 这种 3:1 或 4:1 的比例是制作“细长图”的唯一正解
+ggsave("slender_plot.png", p_combined, width = 12, height = 3.5, dpi = 300)
+
+```
+# Model compare
+
+Finally I'll do a brief model compare. we should be very careful when interpreting the loo compare and weight compare: that we can say FB_model_adult_age is the best model in weight compare, yet these four models provides similar information in terms of loo compare. This is a disappointing signal, suggesting that even the significant variable here is not strong enough to make difference. As a result we can also see Bayes R^2 is very low. 
+
+Nevertheless, given the small sample size of 59 for this logistic regression, such a pattern remains satisfactory. In this demo, I have attempted to make the entire analysis process more rigorous and comprehensive.
+
+```{r}
+
+FB_model_adult_age <- add_criterion(FB_model_adult_age, "loo")
+FB_model_peer_age  <- add_criterion(FB_model_peer_age, "loo")
+FB_model_age       <- add_criterion(FB_model_age, "loo")
+FB_model_null      <- add_criterion(FB_model_null, "loo")
+
+loo_compare(FB_model_adult_age, FB_model_peer_age, FB_model_age, FB_model_null)
+
+model_weights(FB_model_adult_age, FB_model_peer_age, FB_model_age, FB_model_null)
+bayes_R2(FB_model_adult_age)
+```
+
+
+
