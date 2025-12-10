@@ -311,11 +311,8 @@ p_combined <- (p1 | p2 | p3) +
       
         legend.text = element_text(size = 10))
 
-# 2. 预览 (在 RStudio 中可能看起来会被压扁，不要担心)
 print(p_combined)
 
-# 3. 关键步骤：保存为细长型图片
-# width = 12, height = 3.5 这种 3:1 或 4:1 的比例是制作“细长图”的唯一正解
 ggsave("slender_plot.png", p_combined, width = 12, height = 3.5, dpi = 300)
 
 ```
