@@ -36,7 +36,7 @@ I tried to make the entire analysis process more rigorous and comprehensive, so 
 │   └── sens_model_adult_wide.rds
 └── false_belief_demo.Rproj      # RProject file
 ```
-📊 Data Access
+## 📊 Data Access
 Note: The raw data is not included in this repository to comply with distribution policies.
 
 To reproduce this analysis, please follow these steps:
@@ -47,14 +47,14 @@ Download the file sode12767-sup-0002-suppmat.csv.
 
 Place the file inside the data/ folder in your local project directory.
 
-🛠️ Requirements
+## 🛠️ Requirements
 To run the analysis, ensure you have R installed with the following key packages:
 
 Modeling: brms, rstan, cmdstanr, mice
 
 Data & Plotting: tidyverse, patchwork, ggdist, bayestestR
 
-📝 How to Run
+## 📝 How to Run
 Open false_belief_demo.Rproj in RStudio.
 
 Ensure the data file is placed correctly in data/.
@@ -65,5 +65,5 @@ Click Knit to generate the PDF report and run the full pipeline.
 
 Note: The models/ folder contains cached model fits to save compilation time. If you wish to refit the models from scratch, delete the .rds files in the models/ directory.
 
-Author
+## Author
 Chi Zhang Replication Demo - December 2025
